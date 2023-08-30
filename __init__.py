@@ -1,5 +1,5 @@
 import multiprocessing
-import os.path
+import traceback
 from math import ceil, floor
 from pathlib import Path
 from time import sleep
@@ -37,18 +37,271 @@ import sys
 from rembg import remove, new_session
 
 
-
 add_imwrite_plus_imread_plus_to_cv2()
 add_easy_resize_to_cv2()
 allbackgrounds = []
 allimages = []
 
 
+def augment_needle_images(
+    folder,
+    outputfolder,
+    width=640,
+    height=640,
+):
+    def get_shape_information_from_picture(
+        im,
+        method_bw=2,
+        method0_constant_subtracted=2,
+        method0_block_size=11,
+        method1_kernel=(5, 5),
+        method1_startthresh=127,
+        method1_endthresh=255,
+        invert=False,
+    ):
+        image = open_image_in_cv(im, channels_in_output=4)
+        grayImage_konvertiert = open_image_in_cv(image.copy(), channels_in_output=2)
+        if invert:
+            grayImage_konvertiert = cv2.bitwise_not(grayImage_konvertiert)
+        if method_bw == 0:
+            threshg = cv2.adaptiveThreshold(
+                grayImage_konvertiert,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                method0_block_size,
+                method0_constant_subtracted,
+            )
+        elif method_bw == 1:
+            threshg = cv2.adaptiveThreshold(
+                grayImage_konvertiert,
+                255,
+                cv2.ADAPTIVE_THRESH_MEAN_C,
+                cv2.THRESH_BINARY,
+                method0_block_size,
+                method0_constant_subtracted,
+            )
+        else:
+            blur = cv2.GaussianBlur(grayImage_konvertiert.copy(), method1_kernel, 0)
+            _, threshg = cv2.threshold(
+                blur,
+                method1_startthresh,
+                method1_endthresh,
+                cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+            )
+        output_image = np.zeros_like(image)
+        output_image[:, :, 0] = threshg
+        output_image[:, :, 1] = threshg
+        output_image[:, :, 2] = threshg
+        output_image[:, :, 3] = image[:, :, 3]  # Copy the alpha channel
+        return output_image
+
+    def convert_to_random_color(
+        im,
+        method_bw=0,
+        method0_constant_subtracted=2,
+        method0_block_size=11,
+        method1_kernel=(5, 5),
+        method1_startthresh=127,
+        method1_endthresh=255,
+        invert=False,
+    ):
+        image = open_image_in_cv(im, channels_in_output=4)
+
+        output_image = get_shape_information_from_picture(
+            image.copy(),
+            method_bw=method_bw,
+            method0_constant_subtracted=method0_constant_subtracted,
+            method0_block_size=method0_block_size,
+            method1_kernel=method1_kernel,
+            method1_startthresh=method1_startthresh,
+            method1_endthresh=method1_endthresh,
+            invert=invert,
+        )
+        random_numbers = [0, 1, 2]
+        random.shuffle(random_numbers)
+        output_image[
+            np.where(output_image[:, :, random_numbers[0]] <= 127)
+        ] = random.randint(20, 80)
+        output_image[:, :, 3] = image[:, :, 3]
+        return output_image
+
+    def convert_to_grayscale_keep_transparency(image, invert=False):
+        image = open_image_in_cv(image, channels_in_output=4)
+        gray_image = open_image_in_cv(image, channels_in_output=2)
+        if invert:
+            gray_image = cv2.bitwise_not(gray_image)
+        output_image = np.zeros_like(image)
+        output_image[:, :, 0] = gray_image
+        output_image[:, :, 1] = gray_image
+        output_image[:, :, 2] = gray_image
+        output_image[:, :, 3] = image[:, :, 3]  # Copy the alpha channel
+        return output_image
+
+    def convert_to_some_random_color(image, invert=False):
+        image = open_image_in_cv(image, channels_in_output=4)
+        gray_image = open_image_in_cv(image, channels_in_output=2)
+        if invert:
+            gray_image = cv2.bitwise_not(gray_image)
+        output_image = np.zeros_like(image)
+        random_numbers = [0, 0, random.randint(20, 80)]
+        random.shuffle(random_numbers)
+        output_image[np.where(gray_image >= 100)][:, 0] = 255  # random.randint(20, 80)
+        output_image[:, :, 3] = image[:, :, 3]  # Copy the alpha channel
+        return output_image
+
+    folder_path = os.path.normpath(folder)
+    outputfolderx = os.path.normpath(outputfolder)
+    folders = [folder_path]
+    for folderpath in folders:
+        allfiles = get_folder_file_complete_path(str(folderpath))
+        counter = 0
+
+        for i in allfiles:
+            outputfolder = os.path.normpath(
+                os.path.join(
+                    outputfolderx, i.folder.replace(folder_path, "").strip("\\/")
+                )
+            )
+
+            if not os.path.exists(outputfolder):
+                os.makedirs(outputfolder, exist_ok=True)
+            try:
+                image = i.path
+                imagex = resize_to_certain_percentage(
+                    image,
+                    percentage=0.99,
+                    width=width,
+                    height=height,
+                )
+                f1 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f1, imagex)
+                counter += 1
+
+                f1 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f1, open_image_in_cv(imagex.copy(), bgr_to_rgb=True))
+                counter += 1
+
+                i1 = get_shape_information_from_picture(
+                    imagex.copy(),
+                    method_bw=2,
+                    method0_constant_subtracted=2,
+                    method0_block_size=11,
+                    method1_kernel=(5, 5),
+                    method1_startthresh=127,
+                    method1_endthresh=255,
+                )
+                f2 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f2, i1)
+                counter += 1
+                i1 = get_shape_information_from_picture(
+                    imagex.copy(),
+                    method_bw=2,
+                    method0_constant_subtracted=2,
+                    method0_block_size=11,
+                    method1_kernel=(5, 5),
+                    method1_startthresh=127,
+                    method1_endthresh=255,
+                    invert=True,
+                )
+                f2 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f2, i1)
+                counter += 1
+
+                i1 = convert_to_random_color(
+                    imagex,
+                    method_bw=2,
+                    method0_constant_subtracted=2,
+                    method0_block_size=11,
+                    method1_kernel=(5, 5),
+                    method1_startthresh=127,
+                    method1_endthresh=255,
+                    invert=False,
+                )
+                f2 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f2, i1)
+                counter += 1
+
+                i1 = get_shape_information_from_picture(
+                    imagex,
+                    method_bw=1,
+                    method0_constant_subtracted=2,
+                    method0_block_size=11,
+                    method1_kernel=(5, 5),
+                    method1_startthresh=127,
+                    method1_endthresh=255,
+                )
+                f2 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f2, i1)
+                counter += 1
+                i1 = get_shape_information_from_picture(
+                    imagex,
+                    method_bw=1,
+                    method0_constant_subtracted=2,
+                    method0_block_size=11,
+                    method1_kernel=(5, 5),
+                    method1_startthresh=127,
+                    method1_endthresh=255,
+                    invert=True,
+                )
+                f2 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f2, i1)
+                counter += 1
+                i1 = get_shape_information_from_picture(
+                    imagex,
+                    method_bw=2,
+                    method0_constant_subtracted=2,
+                    method0_block_size=11,
+                    method1_kernel=(5, 5),
+                    method1_startthresh=127,
+                    method1_endthresh=255,
+                )
+                f2 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f2, i1)
+                counter += 1
+                i1 = get_shape_information_from_picture(
+                    imagex,
+                    method_bw=2,
+                    method0_constant_subtracted=2,
+                    method0_block_size=11,
+                    method1_kernel=(5, 5),
+                    method1_startthresh=127,
+                    method1_endthresh=255,
+                    invert=True,
+                )
+                f2 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f2, i1)
+                counter += 1
+
+                i2 = convert_to_grayscale_keep_transparency(imagex.copy())
+                f3 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f3, i2)
+                counter += 1
+
+                i2 = convert_to_some_random_color(imagex.copy())
+                f3 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f3, i2)
+                counter += 1
+
+                i2 = convert_to_grayscale_keep_transparency(imagex.copy(), invert=True)
+                f3 = os.path.join(outputfolder, str(counter).zfill(6) + ".png")
+                cv2.imwrite(f3, i2)
+                counter += 1
+            except Exception as fe:
+                pfehler()
+                continue
+
+
+def pfehler():
+    etype, value, tb = sys.exc_info()
+    traceback.print_exception(etype, value, tb)
+
+
 def remove_background_and_resize(folder, folderout, maxwidth=640, maxheight=640):
     allsavedpics = []
     session = new_session()
     if not os.path.exists(folderout):
-        os.makedirs(folderout)
+        os.makedirs(folderout, exist_ok=True)
     ini = 0
     for file in Path(folder).glob("*.*"):
         input_path = str(file)
@@ -57,13 +310,14 @@ def remove_background_and_resize(folder, folderout, maxwidth=640, maxheight=640)
         try:
             input = Image.open(input_path)
         except Exception as fe:
-            print(fe)
+            pfehler()
             continue
         output = remove(input, session=session)
         try:
             input_path = cut_transparent_border(np.array(output))
         except Exception as fe:
-            print(fe)
+            pfehler()
+
             continue
         image = resize_to_certain_percentage(
             input_path,
@@ -71,9 +325,9 @@ def remove_background_and_resize(folder, folderout, maxwidth=640, maxheight=640)
             width=maxwidth,
             height=maxheight,
         )
-        imagenew = Image.fromarray(
-            cv2.imread_plus(image, bgr_to_rgb=False, channels_in_output=4)
-        )
+        imagex = cv2.imread_plus(image, bgr_to_rgb=False, channels_in_output=4)
+        imagex = cut_transparent_border(imagex)
+        imagenew = Image.fromarray(imagex)
         imagenew.save(output_path)
         allsavedpics.append(output_path)
         ini += 1
@@ -121,7 +375,7 @@ def parse_data_from_config_file(cfgfile):
             set_in_original_iter(iterable=copieddict, keys=keys, value=valuewithdtype)
 
         g = list(fla_tu(copieddict))
-        return (copieddict, g)
+        return copieddict, g
 
     (
         cfgdictcopy,
@@ -216,7 +470,8 @@ def get_results_as_df(path_or_np, models, confidence_thresh):
             df = df.loc[df.aa_confidence >= confidence_thresh].copy()
             allresu.append(df.copy())
         except Exception as fe:
-            print(fe)
+            pfehler()
+
     try:
         df = (
             pd.concat(allresu, ignore_index=True, axis=0)
@@ -225,7 +480,8 @@ def get_results_as_df(path_or_np, models, confidence_thresh):
         )
     except Exception as fe:
         df = allresu[0].drop_duplicates().reset_index()
-        print(fe)
+        pfehler()
+
     return df
 
 
@@ -297,7 +553,8 @@ def yolov5_detection(
             else:
                 allresults.append([df, sshot])
         except Exception as fe:
-            print(fe)
+            pfehler()
+
     return allresults
 
 
@@ -414,7 +671,8 @@ def distort_image(image, percentx=0.05, percenty=0.05):
     rec2 = get_rectangle_information(rect=format_1x41)
     recfor2 = rec2.format_4x2
     original_points = np.float32(recfor)
-    distorted_points = np.float32(recfor2) * (1 - (percentx + percenty) * 2)
+    nfloa = np.float32(recfor2)
+    distorted_points = nfloa * (1 - (percentx + percenty) * 2)
     distorted_points[0][0] += random.randint(0, int(image.shape[1] * percentx))
     distorted_points[0][1] += random.randint(0, int(image.shape[1] * percenty))
     distorted_points[1][0] += random.randint(0, int(image.shape[1] * percentx))
@@ -428,10 +686,10 @@ def distort_image(image, percentx=0.05, percenty=0.05):
         image, perspective_matrix, (image.shape[1], image.shape[0])
     )
     box = (
-        floor(min(distorted_points[..., 0])),
-        ceil(min(distorted_points[..., 1])),
-        floor(max(distorted_points[..., 0])),
-        ceil(max(distorted_points[..., 1])),
+        floor(np.min(distorted_points[..., 0])),
+        ceil(np.min(distorted_points[..., 1])),
+        floor(np.max(distorted_points[..., 0])),
+        ceil(np.max(distorted_points[..., 1])),
     )
     distorted_imagecropped = distorted_image[box[1] : box[3], box[0] : box[2]]
     return box, distorted_imagecropped
@@ -450,7 +708,7 @@ def add_transparency_distortion(
 
     bu = img[..., 3]
 
-    im[..., 3][(numexpr.evaluate("(bu==0)"))] = 0
+    im[..., 3][(numexpr.evaluate("(bu==0)", global_dict={}, local_dict={"bu": bu}))] = 0
     return im
 
 
@@ -475,24 +733,62 @@ def overlay_pic(background, overlay):
             percent=None,
             interpolation=cv2.INTER_AREA,
         )
-    overlay_height, overlay_width, _ = overlay.shape
-    x_position = random.randint(0, background.shape[1] - overlay.shape[1])
-    y_position = random.randint(0, background.shape[0] - overlay.shape[0])
+    for _ in range(10):
+        overlay_height, overlay_width, _ = overlay.shape
+        x_position = random.randint(0, background.shape[1] - overlay.shape[1])
+        y_position = random.randint(0, background.shape[0] - overlay.shape[0])
 
-    x_end = x_position + overlay_width
-    y_end = y_position + overlay_height
+        x_end = x_position + overlay_width
+        y_end = y_position + overlay_height
+
+        o1 = overlay[:, :, :3]
+        o2 = background[y_position:y_end, x_position:x_end, :3]
+
+        meancolor0 = o1[..., 0]
+        meancolor1 = o1[..., 1]
+        meancolor2 = o1[..., 2]
+
+        meancolor1_0 = o2[..., 0]
+        meancolor1_1 = o2[..., 1]
+        meancolor1_2 = o2[..., 2]
+        ll1 = numexpr.evaluate(
+            r"((abs(meancolor0-meancolor1_0))< 80) & ((abs(meancolor1-meancolor1_1))< 80) & ((abs(meancolor2-meancolor1_2))< 80)",
+            global_dict={},
+            local_dict={
+                "meancolor0": meancolor0,
+                "meancolor1": meancolor1,
+                "meancolor2": meancolor2,
+                "meancolor1_0": meancolor1_0,
+                "meancolor1_1": meancolor1_1,
+                "meancolor1_2": meancolor1_2,
+            },
+        )
+        l1 = len(np.where(ll1)[0])
+        l2 = (o2.shape[0] * o2.shape[1]) // 10
+        if l1 > l2:
+            continue
+        else:
+            break
+    else:
+        return (None, None, None, None), None
 
     o0 = overlay[:, :, 3:4]
-    alpha_front = numexpr.evaluate("o0 / 255")
-    alpha_back = background[y_position:y_end, x_position:x_end, 3:4] / 255
-    o1 = overlay[:, :, :3]
-    o2 = background[y_position:y_end, x_position:x_end, :3]
+    alpha_front = numexpr.evaluate("o0 / 255", global_dict={}, local_dict={"o0": o0})
+    alpha_ba = background[y_position:y_end, x_position:x_end, 3:4]
+    alpha_back = numexpr.evaluate(
+        "alpha_ba / 255", global_dict={}, local_dict={"alpha_ba": alpha_ba}
+    )
+
     background[y_position:y_end, x_position:x_end, :3] = numexpr.evaluate(
-        """alpha_front * o1 + (1 - alpha_front) * o2"""
+        """alpha_front * o1 + (1 - alpha_front) * o2""",
+        global_dict={},
+        local_dict={"alpha_front": alpha_front, "o1": o1, "o2": o2},
     )
 
     background[y_position:y_end, x_position:x_end, 3:4] = numexpr.evaluate(
-        """(alpha_front + alpha_back) / (1 + alpha_front * alpha_back) * 255"""
+        """(alpha_front + alpha_back) / (1 + alpha_front * alpha_back) * 255""",
+        global_dict={},
+        local_dict={"alpha_front": alpha_front, "alpha_back": alpha_back},
     )
 
     x_center = (x_position + x_end) / (2 * background.shape[1])
@@ -513,10 +809,13 @@ def canny_edge_blur(image, threshold1=10, threshold2=90, blur=((55, 55), 0)):
     blurred_image = cv2.GaussianBlur(image, *blur)
 
     mask = np.zeros_like(image)
-    mask[numexpr.evaluate("""edges != 0""")] = 255
-
-    result = cv2.bitwise_and(image, cv2.bitwise_not(mask)) + cv2.bitwise_and(
-        blurred_image, mask
+    mask[
+        numexpr.evaluate("""edges != 0""", global_dict={}, local_dict={"edges": edges})
+    ] = 255
+    ma1 = cv2.bitwise_and(image, cv2.bitwise_not(mask))
+    ma2 = cv2.bitwise_and(blurred_image, mask)
+    result = numexpr.evaluate(
+        """ma1 + ma2""", global_dict={}, local_dict={"ma1": ma1, "ma2": ma2}
     )
     return result
 
@@ -537,7 +836,11 @@ def add_pixxelborder(img, loop=10, add_each_loop=2):
             test = random.randrange(x, x * ending) * np.random.random_sample(
                 bord.shape
             ) + random.randrange(x, x * ending) * np.random.random_sample(bord.shape)
-            test[numexpr.evaluate("test > 255")] = 255
+            test[
+                numexpr.evaluate(
+                    "test > 255", global_dict={}, local_dict={"test": test}
+                )
+            ] = 255
             test = test.astype(np.uint8)
             image0[:, :, 3][x : x + 1] = test
             image0[:, :, 3][image0.shape[0] - x - 1 : image0.shape[0] - x] = test
@@ -553,12 +856,19 @@ def add_pixxelborder(img, loop=10, add_each_loop=2):
             test = random.randrange(x, x * ending) * np.random.random_sample(
                 bord.shape
             ) + random.randrange(x, x * ending) * np.random.random_sample(bord.shape)
-            test[numexpr.evaluate("test > 255")] = 255
+            test[
+                numexpr.evaluate(
+                    "test > 255", global_dict={}, local_dict={"test": test}
+                )
+            ] = 255
             test = test.astype(np.uint8)
             image0[:, :, 3][x : x + 1] = test
             image0[:, :, 3][image0.shape[0] - x - 1 : image0.shape[0] - x] = test
         image0 = np.rot90(image0, k=3)
-        image0[..., 3][np.where(imageold[..., 3] == 0)] = 0
+        imol = imageold[..., 3]
+        image0[..., 3][
+            (numexpr.evaluate("imol == 0", global_dict={}, local_dict={"imol": imol}))
+        ] = 0
         image0[:, :, 3][..., :2] = 0
         image0[:, :, 3][..., -2:] = 0
         image0[:, :, 3][:2] = 0
@@ -586,16 +896,19 @@ def blur_borders_keep_transparency(
     alpha_channel = imageall[:, :, 3]
 
     mask = np.zeros_like(image, dtype=np.uint8)
-    mask[: ceil(image.shape[0] * y0), :, :] = 255  # Top border
-    mask[-ceil(image.shape[0] * y1) :, :, :] = 255  # Bottom border
-    mask[:, : ceil(image.shape[1] * x0), :] = 255  # Left border
-    mask[:, -ceil(image.shape[1] * x1) :, :] = 255  # Right border
+    mask[: ceil(image.shape[0] * y0), :, :] = 255
+    mask[-ceil(image.shape[0] * y1) :, :, :] = 255
+    mask[:, : ceil(image.shape[1] * x0), :] = 255
+    mask[:, -ceil(image.shape[1] * x1) :, :] = 255
 
     blurred_borders = cv2.GaussianBlur(image, *blur, borderType=borderType)
 
-    result = cv2.bitwise_and(image, cv2.bitwise_not(mask)) + cv2.bitwise_and(
-        blurred_borders, mask
+    ma1 = cv2.bitwise_and(image, cv2.bitwise_not(mask))
+    ma2 = cv2.bitwise_and(blurred_borders, mask)
+    result = numexpr.evaluate(
+        """ma1 + ma2""", global_dict={}, local_dict={"ma1": ma1, "ma2": ma2}
     )
+
     return np.dstack((result, alpha_channel))
 
 
@@ -611,16 +924,19 @@ def blur_borders(
     image = cv2.imread_plus(im, channels_in_output=4)
 
     mask = np.zeros_like(image, dtype=np.uint8)
-    mask[: ceil(image.shape[0] * y0), :, :] = 255  # Top border
-    mask[-ceil(image.shape[0] * y1) :, :, :] = 255  # Bottom border
-    mask[:, : ceil(image.shape[1] * x0), :] = 255  # Left border
-    mask[:, -ceil(image.shape[1] * x1) :, :] = 255  # Right border
+    mask[: ceil(image.shape[0] * y0), :, :] = 255
+    mask[-ceil(image.shape[0] * y1) :, :, :] = 255
+    mask[:, : ceil(image.shape[1] * x0), :] = 255
+    mask[:, -ceil(image.shape[1] * x1) :, :] = 255
 
     blurred_borders = cv2.GaussianBlur(image, *blur, borderType=borderType)
 
-    result = cv2.bitwise_and(image, cv2.bitwise_not(mask)) + cv2.bitwise_and(
-        blurred_borders, mask
+    ma1 = cv2.bitwise_and(image, cv2.bitwise_not(mask))
+    ma2 = cv2.bitwise_and(blurred_borders, mask)
+    result = numexpr.evaluate(
+        """ma1 + ma2""", global_dict={}, local_dict={"ma1": ma1, "ma2": ma2}
     )
+
     return result
 
 
@@ -669,8 +985,12 @@ def hue_shift_keep_transparency(image, hue_shift=20):
     image = cv2.imread_plus(image, channels_in_output=4)
     alpha_channel = image[:, :, 3]
     hsv_image = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2HSV)
-
-    hsv_image[:, :, 0] = (hsv_image[:, :, 0] + hue_shift) % 180
+    hsvi = hsv_image[:, :, 0]
+    hsv_image[:, :, 0] = numexpr.evaluate(
+        "(hsvi + hue_shift) % 180",
+        global_dict={},
+        local_dict={"hsvi": hsvi, "hue_shift": hue_shift},
+    )
 
     color_adjusted_bgr = cv2.cvtColor(hsv_image, cv2.COLOR_HSV2BGR)
 
@@ -682,7 +1002,12 @@ def hue_shift(image, hue_shift=20):
 
     hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    hsv_image[:, :, 0] = (hsv_image[:, :, 0] + hue_shift) % 180
+    hsvi = hsv_image[:, :, 0]
+    hsv_image[:, :, 0] = numexpr.evaluate(
+        "(hsvi + hue_shift) % 180",
+        global_dict={},
+        local_dict={"hsvi": hsvi, "hue_shift": hue_shift},
+    )
 
     color_adjusted_image = cv2.cvtColor(hsv_image, cv2.COLOR_HSV2BGR)
     return color_adjusted_image
@@ -703,7 +1028,9 @@ def cut_transparent_border(image):
     image = cv2.imread_plus(image, channels_in_output=4)
 
     bu = image[:, :, 3]
-    non_transparent_coords = np.argwhere(numexpr.evaluate("bu > 100"))
+    non_transparent_coords = np.argwhere(
+        numexpr.evaluate("bu > 100", global_dict={}, local_dict={"bu": bu})
+    )
 
     min_row, min_col = np.min(non_transparent_coords, axis=0)
     max_row, max_col = np.max(non_transparent_coords, axis=0)
@@ -735,25 +1062,31 @@ def rotate_image(image, rotation_angle=45):
 
 def change_contrast(image, contrast_factor=1.5):
     image = cv2.imread_plus(image, channels_in_output=4)
-
-    adjusted_image = np.clip(image * contrast_factor, 0, 255).astype(np.uint8)
+    contimage = numexpr.evaluate(
+        "image * contrast_factor",
+        global_dict={},
+        local_dict={"image": image, "contrast_factor": contrast_factor},
+    )
+    adjusted_image = np.clip(contimage, 0, 255).astype(np.uint8)
     bu = image[..., 3]
-    adjusted_image[..., 3][numexpr.evaluate("bu==0")] = 0
+    adjusted_image[..., 3][
+        numexpr.evaluate("bu==0", global_dict={}, local_dict={"bu": bu})
+    ] = 0
     return adjusted_image
 
 
 def sharpen_image(image, blur=((55, 55), 0), add_weighted=(4.5, -1.05)):
     image = cv2.imread_plus(image, channels_in_output=4)
 
-    blurred_image = blur_image_keep_transparency(
-        image, blur=blur
-    )  # Adjust the kernel size as needed
+    blurred_image = blur_image_keep_transparency(image, blur=blur)
 
     sharpened_image = cv2.addWeighted(
         image, add_weighted[0], blurred_image, add_weighted[1], 0
     )
     bu = image[..., 3]
-    sharpened_image[..., 3][numexpr.evaluate("bu==0")] = 0
+    sharpened_image[..., 3][
+        numexpr.evaluate("bu==0", global_dict={}, local_dict={"bu": bu})
+    ] = 0
     return sharpened_image
 
 
@@ -765,6 +1098,31 @@ def get_part_of_image(image, width=640, height=640):
     )
 
 
+def get_random_size_between(
+    width,
+    height,
+    min_width=500,
+    max_width=640,
+    min_height=500,
+    max_height=640,
+):
+    if height <= max_height or width <= max_width:
+        while height <= random.uniform(
+            min_height, max_height
+        ) or width <= random.uniform(min_width, max_width):
+            height = height * 1.01
+
+            width = width * 1.01
+
+    while height >= random.uniform(min_height, max_height) or width >= random.uniform(
+        min_width, max_width
+    ):
+        height = height * 0.99
+
+        width = width * 0.99
+    return int(width), int(height)
+
+
 def resize_to_certain_percentage(
     image,
     percentage=0.3,
@@ -772,44 +1130,24 @@ def resize_to_certain_percentage(
     height=640,
 ):
     image = cv2.imread_plus(image, channels_in_output=4)
-    maxwidth = int(width * percentage)
-    maxheight = int(height * percentage)
-    image = cv2.imread_plus(image, channels_in_output=4)
 
-    if image.shape[0] < maxheight:
-        image = cv2.easy_resize_image(
-            image,
-            width=None,
-            height=maxheight,
-            percent=None,
-            interpolation=cv2.INTER_AREA,
-        )
+    newwidth, newheight = get_random_size_between(
+        image.shape[1],
+        image.shape[0],
+        min_width=int(percentage * width),
+        max_width=width,
+        min_height=int(percentage * height),
+        max_height=height,
+    )
 
-    if image.shape[1] < maxwidth:
-        image = cv2.easy_resize_image(
-            image,
-            width=maxwidth,
-            height=None,
-            percent=None,
-            interpolation=cv2.INTER_AREA,
-        )
+    image = cv2.easy_resize_image(
+        image.copy(),
+        width=newwidth,
+        height=newheight,
+        percent=None,
+        interpolation=cv2.INTER_AREA,
+    )
 
-    if image.shape[1] > maxwidth:
-        image = cv2.easy_resize_image(
-            image,
-            width=maxwidth,
-            height=None,
-            percent=None,
-            interpolation=cv2.INTER_AREA,
-        )
-    if image.shape[0] > maxheight:
-        image = cv2.easy_resize_image(
-            image,
-            width=None,
-            height=maxheight,
-            percent=None,
-            interpolation=cv2.INTER_AREA,
-        )
     return image
 
 
@@ -834,7 +1172,6 @@ def create_folder_structure(outputfolder):
     ]
 
 
-@lru_cache(maxsize=128)
 def open_image_cached(path, cut_border=False, count_cors=False):
     image = cv2.imread_plus(path, channels_in_output=4)
     if cut_border:
@@ -844,11 +1181,29 @@ def open_image_cached(path, cut_border=False, count_cors=False):
     return image, count_colors(image)
 
 
-@lru_cache(maxsize=512)
-def open_image_cached2(path, cut_border=False, count_cors=False):
+@lru_cache(maxsize=4096)
+def open_image_cached2(
+    path, image_size_width, image_size_height, cut_border=False, count_cors=False
+):
     image = cv2.imread_plus(path, channels_in_output=4)
     if cut_border:
         image = cut_transparent_border(image)
+    newwidth, newheight = get_random_size_between(
+        image.shape[1],
+        image.shape[0],
+        min_width=int(0.98 * image_size_width),
+        max_width=image_size_width,
+        min_height=int(0.98 * image_size_width),
+        max_height=image_size_height,
+    )
+
+    image = cv2.easy_resize_image(
+        image,
+        width=newwidth,
+        height=newheight,
+        percent=None,
+        interpolation=cv2.INTER_AREA,
+    )
     if not count_cors:
         return image
     return image, count_colors(image)
@@ -883,7 +1238,6 @@ def crop_list_of_images(qty, input_folder, outputfolder, width=640, height=640):
             allbackgrounds.append(p)
         except Exception:
             continue
-    open_image_cached.cache_clear()
     return allbackgrounds
 
 
@@ -946,7 +1300,15 @@ def replace_color(
         g = img[..., 1]
         b = img[..., 0]
         r1, g1, b1 = color
-        (img[numexpr.evaluate("""(r == r1) & (g == g1) & (b == b1)""")]) = randomcolor
+        (
+            img[
+                numexpr.evaluate(
+                    """(r == r1) & (g == g1) & (b == b1)""",
+                    global_dict={},
+                    local_dict={"r": r, "r1": r1, "g": g, "g1": g1, "b": b, "b1": b1},
+                )
+            ]
+        ) = randomcolor
     img[..., 3] = image[..., 3]
     return img
 
@@ -959,6 +1321,7 @@ def move_files_to_folder(list_of_files, destination_folder, concatfolder):
         try:
             shutil.move(f, destination_folder)
         except Exception as fe:
+            pfehler()
             print(f"{fe}", end="\r")
             continue
     return regex.sub(r"[\\/]+", "/", destination_folder).rstrip("/") + "/"
@@ -1055,6 +1418,31 @@ def generate_args(
     flip_image_left_right_frequency,
     flip_image_up_down_frequency,
     background_qty,
+    bloom_kernel_min,
+    bloom_kernel_max,
+    bloom_sigmaX_min,
+    bloom_sigmaX_max,
+    bloom_intensity_min,
+    bloom_intensity_max,
+    bloom_frequency,
+    fish_distortion_min1,
+    fish_distortion_max1,
+    fish_distortion_min2,
+    fish_distortion_max2,
+    fish_distortion_min3,
+    fish_distortion_max3,
+    fish_distortion_min4,
+    fish_distortion_max4,
+    fish_divider_1_min,
+    fish_divider_1_max,
+    fish_divider_2_min,
+    fish_divider_2_max,
+    fish_divider_3_min,
+    fish_divider_3_max,
+    fish_divider_4_min,
+    fish_divider_4_max,
+    fish_border_add,
+    fish_frequency,
 ):
     try:
         while True:
@@ -1144,9 +1532,53 @@ def generate_args(
                 flip_image_left_right_frequency,
                 flip_image_up_down_frequency,
                 background_qty,
+                bloom_kernel_min,
+                bloom_kernel_max,
+                bloom_sigmaX_min,
+                bloom_sigmaX_max,
+                bloom_intensity_min,
+                bloom_intensity_max,
+                bloom_frequency,
+                fish_distortion_min1,
+                fish_distortion_max1,
+                fish_distortion_min2,
+                fish_distortion_max2,
+                fish_distortion_min3,
+                fish_distortion_max3,
+                fish_distortion_min4,
+                fish_distortion_max4,
+                fish_divider_1_min,
+                fish_divider_1_max,
+                fish_divider_2_min,
+                fish_divider_2_max,
+                fish_divider_3_min,
+                fish_divider_3_max,
+                fish_divider_4_min,
+                fish_divider_4_max,
+                fish_border_add,
+                fish_frequency,
             )
     except KeyboardInterrupt:
         return
+
+
+def add_bloom_effect(image, kernel=(15, 15), sigmaX=240, bloom_intensity=4.5):
+    image = open_image_in_cv(image, channels_in_output=4).copy()
+    bloa = image[..., 3]
+    nottrans = np.where(
+        numexpr.evaluate("bloa > 100", global_dict={}, local_dict={"bloa": bloa})
+    )
+    blurred = cv2.GaussianBlur(image, kernel, sigmaX=sigmaX)
+    bloom = cv2.addWeighted(image, 1, blurred, bloom_intensity, 0)
+    bloom = np.clip(bloom, 0, 255).astype(np.uint8)
+    rands = [random.randint(0, 100), random.randint(100, 150), random.randint(150, 230)]
+    random.shuffle(rands)
+    bloom[..., 0] = np.clip(bloom[..., 0], 0, rands[0]).astype(np.uint8)
+    bloom[..., 1] = np.clip(bloom[..., 1], 0, rands[1]).astype(np.uint8)
+    bloom[..., 2] = np.clip(bloom[..., 2], 0, rands[2]).astype(np.uint8)
+
+    bloom[nottrans] = image[nottrans]
+    return bloom
 
 
 def make_image(arg):
@@ -1233,13 +1665,39 @@ def make_image(arg):
             flip_image_left_right_frequency,
             flip_image_up_down_frequency,
             background_qty,
+            bloom_kernel_min,
+            bloom_kernel_max,
+            bloom_sigmaX_min,
+            bloom_sigmaX_max,
+            bloom_intensity_min,
+            bloom_intensity_max,
+            bloom_frequency,
+            fish_distortion_min1,
+            fish_distortion_max1,
+            fish_distortion_min2,
+            fish_distortion_max2,
+            fish_distortion_min3,
+            fish_distortion_max3,
+            fish_distortion_min4,
+            fish_distortion_max4,
+            fish_divider_1_min,
+            fish_divider_1_max,
+            fish_divider_2_min,
+            fish_divider_2_max,
+            fish_divider_3_min,
+            fish_divider_3_max,
+            fish_divider_4_min,
+            fish_divider_4_max,
+            fish_border_add,
+            fish_frequency,
         ) = arg
         hackstack_image = open_image_cached(hackstack_image).copy()
-        meancolor = np.mean(np.mean(hackstack_image[..., :3], axis=(0, 1)))
-        if meancolor < 10 or meancolor > 200:
-            return (None, None, None, None, None, None), None
         needle_image, color_counted = open_image_cached2(
-            needle_image, cut_border=True, count_cors=True
+            needle_image,
+            image_size_width,
+            image_size_height,
+            cut_border=True,
+            count_cors=True,
         )
         needle_image = needle_image.copy()
         if do_or_dont(colors_to_change_frequency):
@@ -1258,26 +1716,30 @@ def make_image(arg):
                     colors_to_change_b_max,
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
 
         if do_or_dont(flip_image_left_right_frequency):
             try:
                 needle_image = flip_image_left_right(needle_image)
             except Exception as fe:
-                print(fe)
+                pfehler()
+
         if do_or_dont(flip_image_up_down_frequency):
             try:
                 needle_image = flip_image_up_down(needle_image)
             except Exception as fe:
-                print(fe)
+                pfehler()
 
-        im = resize_to_certain_percentage(
+        new_resize_width = int(
+            random.uniform(needle_size_percentage_min, needle_size_percentage_max)
+            * image_size_width
+        )
+        im = cv2.easy_resize_image(
             needle_image,
-            percentage=random.uniform(
-                needle_size_percentage_min, needle_size_percentage_max
-            ),
-            width=image_size_width,
-            height=image_size_height,
+            width=new_resize_width,
+            height=None,
+            percent=None,
+            interpolation=cv2.INTER_AREA,
         )
 
         if do_or_dont(blur_image_frequency):
@@ -1290,7 +1752,7 @@ def make_image(arg):
                     ),
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
 
         if do_or_dont(sharpen_image_frequency):
             try:
@@ -1304,7 +1766,7 @@ def make_image(arg):
                     ),
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
 
         if do_or_dont(distorted_resizing_frequency):
             try:
@@ -1318,7 +1780,8 @@ def make_image(arg):
                     ),
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
+
         if do_or_dont(blur_borders_frequency):
             try:
                 im = blur_borders_keep_transparency(
@@ -1334,7 +1797,8 @@ def make_image(arg):
                     borderType=cv2.BORDER_DEFAULT,
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
+
         if do_or_dont(pixelborder_frequency):
             try:
                 im = add_pixxelborder(
@@ -1345,9 +1809,12 @@ def make_image(arg):
                     ),
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
 
-        if do_or_dont(perspective_distortion_percentage):
+        if (
+            do_or_dont(perspective_distortion_percentage)
+            and new_resize_width / image_size_width > 0.2
+        ):
             try:
                 box, im = distort_image(
                     im,
@@ -1359,7 +1826,8 @@ def make_image(arg):
                     ),
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
+
         if do_or_dont(transparency_distortion_frequency):
             try:
                 im = add_transparency_distortion(
@@ -1368,7 +1836,8 @@ def make_image(arg):
                     max_tranparency=transparency_distortion_max,
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
+
         if do_or_dont(canny_edge_blur_frequency):
             try:
                 im = canny_edge_blur(
@@ -1389,7 +1858,8 @@ def make_image(arg):
                     ),
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
+
         if do_or_dont(random_crop_frequency):
             try:
                 im = random_crop(
@@ -1400,14 +1870,15 @@ def make_image(arg):
                     max_x=random_crop_min_x,
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
+
         if do_or_dont(hue_shift_frequency):
             try:
                 im = hue_shift_keep_transparency(
                     im, hue_shift=random.randint(hue_shift_min, hue_shift_max)
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
 
         if do_or_dont(change_contrast_frequency):
             try:
@@ -1418,7 +1889,8 @@ def make_image(arg):
                     ),
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
+
         if do_or_dont(rotate_image_frequency):
             try:
                 im = rotate_image(
@@ -1426,13 +1898,55 @@ def make_image(arg):
                     rotation_angle=random.randint(rotate_image_min, rotate_image_max),
                 )
             except Exception as fe:
-                print(fe)
+                pfehler()
+
+        if do_or_dont(bloom_frequency):
+            try:
+                _ke = needle_blur_image_kernel_function(
+                    bloom_kernel_min, bloom_kernel_max
+                )[:-1]
+                im = add_bloom_effect(
+                    im,
+                    kernel=_ke[0],
+                    sigmaX=random.randint(bloom_sigmaX_min, bloom_sigmaX_max),
+                    bloom_intensity=random.uniform(
+                        bloom_intensity_min, bloom_intensity_max
+                    ),
+                )
+            except Exception as fe:
+                pfehler()
+
+        if do_or_dont(fish_frequency) and new_resize_width / image_size_width > 0.2:
+            try:
+                im = fish_warp_image(
+                    im,
+                    fish_distortion_min1,
+                    fish_distortion_max1,
+                    fish_distortion_min2,
+                    fish_distortion_max2,
+                    fish_distortion_min3,
+                    fish_distortion_max3,
+                    fish_distortion_min4,
+                    fish_distortion_max4,
+                    fish_divider_1_min,
+                    fish_divider_1_max,
+                    fish_divider_2_min,
+                    fish_divider_2_max,
+                    fish_divider_3_min,
+                    fish_divider_3_max,
+                    fish_divider_4_min,
+                    fish_divider_4_max,
+                    fish_border_add,
+                )
+            except Exception as fe:
+                pfehler()
 
         try:
-            meancolor = np.mean(np.mean(im[..., :3], axis=(0, 1)))
-            if meancolor > 200:
-                return (None, None, None, None, None, None), None
+            im = cut_transparent_border(im)
+        except Exception as fe:
+            pfehler()
 
+        try:
             (x_center, y_center, width, height), background = overlay_pic(
                 hackstack_image, im
             )
@@ -1450,6 +1964,139 @@ def make_image(arg):
         return (None, None, None, None, None, None), None
 
 
+def fish_eye(
+    img,
+    distortion_coefficients=(0.2, -0.27, 0.25, -0.08),
+    camera_intrinsic_parameters=((100, 0, 100), (0, 100, 500), (0, 0, 1)),
+):
+    img = open_image_in_cv(img, channels_in_output=4)
+    K = np.array(camera_intrinsic_parameters, dtype=np.float32)
+    d = np.array(distortion_coefficients, dtype=np.float32)
+    maxim = img.max()
+    img = numexpr.evaluate(
+        "img / maxim", global_dict={}, local_dict={"img": img, "maxim": maxim}
+    )
+    # img = img / img.max()
+    indic0 = (
+        np.array(np.meshgrid(np.arange(img.shape[0]), np.arange(img.shape[1])))
+        .T.reshape(np.prod(img.shape[:2]), -1)
+        .astype(np.float32)
+    )
+
+    Kinv = np.linalg.inv(K)
+    indices1 = Kinv @ np.array(
+        [indic0[..., 0], indic0[..., 1], np.ones(len(indic0[..., 1]))]
+    )
+    indices1 = np.expand_dims(indices1.T[..., :2], axis=0)
+    indic1 = cv2.fisheye.distortPoints(indices1, K, d)
+    indic0, indic1 = indic0.squeeze(), indic1.squeeze()
+    indic1 = indic1.astype(np.uint32)
+    indic0 = indic0.astype(np.uint32)
+    distorted_img = np.zeros_like(img)
+    a1 = indic1[..., 0]
+    s1 = img.shape[0]
+    a2 = indic1[..., 1]
+    s2 = img.shape[1]
+    indi = np.where(
+        numexpr.evaluate(
+            "(a1 < s1) & (a2 < s2)",
+            global_dict={},
+            local_dict={"a1": a1, "s1": s1, "a2": a2, "s2": s2},
+        )
+    )
+    indi0 = indic1[indi]
+    indi1 = indic0[indi]
+    x, y = indi0[..., 0], indi0[..., 1]
+    x1, y1 = indi1[..., 0], indi1[..., 1]
+    distorted_img[x, y] = img[x1, y1]
+    return (
+        numexpr.evaluate(
+            "255 * distorted_img",
+            global_dict={},
+            local_dict={"distorted_img": distorted_img},
+        )
+    ).astype(np.uint8)
+
+
+def fish_warp_image(
+    img,
+    fish_distortion_min1=0.01,
+    fish_distortion_max1=0.4,
+    fish_distortion_min2=0.01,
+    fish_distortion_max2=0.4,
+    fish_distortion_min3=0.01,
+    fish_distortion_max3=0.4,
+    fish_distortion_min4=0.01,
+    fish_distortion_max4=0.04,
+    fish_divider_1_min=1,
+    fish_divider_1_max=2,
+    fish_divider_2_min=1,
+    fish_divider_2_max=4,
+    fish_divider_3_min=1,
+    fish_divider_3_max=2,
+    fish_divider_4_min=2,
+    fish_divider_4_max=6,
+    fish_border_add=0.1,
+):
+    img = open_image_in_cv(img, channels_in_output=4)
+
+    top_border = int(img.shape[0] * fish_border_add)
+    bottom_border = int(img.shape[0] * fish_border_add)
+    left_border = int(img.shape[1] * fish_border_add)
+    right_border = int(img.shape[1] * fish_border_add)
+
+    border_color = [0, 0, 0, 0]
+
+    img = cv2.copyMakeBorder(
+        img,
+        top_border,
+        bottom_border,
+        left_border,
+        right_border,
+        cv2.BORDER_CONSTANT,
+        value=border_color,
+    )
+
+    dico1 = (
+        -random.uniform(fish_distortion_min1, fish_distortion_max1),
+        random.uniform(fish_distortion_min2, fish_distortion_max2),
+        random.uniform(fish_distortion_min3, fish_distortion_max3),
+        random.uniform(fish_distortion_min4, fish_distortion_max4),
+    )
+
+    dico2 = (
+        -random.uniform(fish_distortion_min1, fish_distortion_max1),
+        random.uniform(fish_distortion_min2, fish_distortion_max2),
+        random.uniform(fish_distortion_min3, fish_distortion_max3),
+        -random.uniform(fish_distortion_min4, fish_distortion_max4),
+    )
+    dico3 = (
+        random.uniform(fish_distortion_min1, fish_distortion_max1),
+        -random.uniform(fish_distortion_min2, fish_distortion_max2),
+        random.uniform(fish_distortion_min3, fish_distortion_max3),
+        -random.uniform(fish_distortion_min4, fish_distortion_max4),
+    )
+    dico = random.choice([dico1, dico2, dico3])
+
+    para = (
+        (
+            img.shape[0] // random.randint(fish_divider_1_min, fish_divider_1_max),
+            0,
+            img.shape[0] // random.randint(fish_divider_2_min, fish_divider_2_max),
+        ),
+        (
+            0,
+            img.shape[1] // random.randint(fish_divider_3_min, fish_divider_3_max),
+            img.shape[1] // random.randint(fish_divider_4_min, fish_divider_4_max),
+        ),
+        (0, 0, 1),
+    )
+
+    return fish_eye(
+        img=img, distortion_coefficients=dico, camera_intrinsic_parameters=para
+    )
+
+
 def psw(data):
     totalcounter = 0
     imagefolder = None
@@ -1457,6 +2104,7 @@ def psw(data):
     generated_pic_folder = None
     personal_yaml_file = None
     all_classes = {}
+    backgroundfolder = ""
     for (
         classnumber,
         classname,
@@ -1539,8 +2187,33 @@ def psw(data):
         flip_image_left_right_frequency,
         flip_image_up_down_frequency,
         verbose,
+        bloom_kernel_min,
+        bloom_kernel_max,
+        bloom_sigmaX_min,
+        bloom_sigmaX_max,
+        bloom_intensity_min,
+        bloom_intensity_max,
+        bloom_frequency,
+        fish_distortion_min1,
+        fish_distortion_max1,
+        fish_distortion_min2,
+        fish_distortion_max2,
+        fish_distortion_min3,
+        fish_distortion_max3,
+        fish_distortion_min4,
+        fish_distortion_max4,
+        fish_divider_1_min,
+        fish_divider_1_max,
+        fish_divider_2_min,
+        fish_divider_2_max,
+        fish_divider_3_min,
+        fish_divider_3_max,
+        fish_divider_4_min,
+        fish_divider_4_max,
+        fish_border_add,
+        fish_frequency,
     ) in data:
-        allbackgrounds.clear()
+        # allbackgrounds.clear()
         allimages.clear()
         (
             datasetfolder,
@@ -1640,6 +2313,31 @@ def psw(data):
             flip_image_left_right_frequency,
             flip_image_up_down_frequency,
             background_qty,
+            bloom_kernel_min,
+            bloom_kernel_max,
+            bloom_sigmaX_min,
+            bloom_sigmaX_max,
+            bloom_intensity_min,
+            bloom_intensity_max,
+            bloom_frequency,
+            fish_distortion_min1,
+            fish_distortion_max1,
+            fish_distortion_min2,
+            fish_distortion_max2,
+            fish_distortion_min3,
+            fish_distortion_max3,
+            fish_distortion_min4,
+            fish_distortion_max4,
+            fish_divider_1_min,
+            fish_divider_1_max,
+            fish_divider_2_min,
+            fish_divider_2_max,
+            fish_divider_3_min,
+            fish_divider_3_max,
+            fish_divider_4_min,
+            fish_divider_4_max,
+            fish_border_add,
+            fish_frequency,
         )
 
         generated_pic_folder = os.path.normpath(os.path.join(datasetfolder, "splitset"))
@@ -1721,3 +2419,344 @@ def psw(data):
     with open(yolovyamel, encoding="utf-8", mode="w") as f:
         for line in fileinfosmodel.splitlines():
             f.write(f"{line.strip()}\n")
+
+    images = [x.path for x in get_folder_file_complete_path(backgroundfolder)]
+    move_files_to_folder(images, "images/train", generated_pic_folder)
+
+
+def generate_ini_file(allclasses):
+    def _generate_ini_file(
+        classnumber,
+        classname,
+        random_background_folder,
+        class_pictures,
+        personal_yaml_file,
+        outputfolder,
+        howmany=3000,
+        background_qty=300,
+        processes=4,
+        image_size_width=640,
+        image_size_height=640,
+        needle_size_percentage_min=0.2,
+        needle_size_percentage_max=0.8,
+        blur_image_kernel_min=1,
+        blur_image_kernel_max=5,
+        blur_image_frequency=10,
+        sharpen_image_kernel_min=1,
+        sharpen_image_kernel_max=6,
+        sharpen_image_frequency=10,
+        distorted_resizing_add_min_x=0.01,
+        distorted_resizing_add_max_x=0.15,
+        distorted_resizing_add_min_y=0.01,
+        distorted_resizing_add_max_y=0.15,
+        distorted_resizing_frequency=30,
+        blur_borders_min_x0=0.01,
+        blur_borders_max_x0=0.1,
+        blur_borders_min_x1=0.01,
+        blur_borders_max_x1=0.1,
+        blur_borders_min_y0=0.01,
+        blur_borders_max_y0=0.1,
+        blur_borders_min_y1=0.01,
+        blur_borders_max_y1=0.1,
+        blur_borders_kernel_min=1,
+        blur_borders_kernel_max=6,
+        blur_borders_frequency=10,
+        pixelborder_min=1,
+        pixelborder_max=20,
+        pixelborder_loop_min=1,
+        pixelborder_loop_max=2,
+        pixelborder_frequency=20,
+        perspective_distortion_min_x=0.01,
+        perspective_distortion_max_x=0.15,
+        perspective_distortion_min_y=0.01,
+        perspective_distortion_max_y=0.15,
+        perspective_distortion_percentage=10,
+        transparency_distortion_min=150,
+        transparency_distortion_max=255,
+        transparency_distortion_frequency=40,
+        canny_edge_blur_thresh_lower_min=10,
+        canny_edge_blur_thresh_lower_max=20,
+        canny_edge_blur_thresh_upper_min=80,
+        canny_edge_blur_thresh_upper_max=90,
+        canny_edge_blur_kernel_min=1,
+        canny_edge_blur_kernel_max=6,
+        canny_edge_blur_frequency=20,
+        random_crop_min_x=0.01,
+        random_crop_max_x=0.10,
+        random_crop_min_y=0.01,
+        random_crop_max_y=0.10,
+        random_crop_frequency=20,
+        hue_shift_min=1,
+        hue_shift_max=180,
+        hue_shift_frequency=90,
+        change_contrast_min=0.8,
+        change_contrast_max=1.2,
+        change_contrast_frequency=30,
+        rotate_image_min=2,
+        rotate_image_max=359,
+        rotate_image_frequency=90,
+        colors_to_change_percentage_max=75,
+        colors_to_change_percentage_min=1,
+        colors_to_change_frequency=90,
+        colors_to_change_r_min=5,
+        colors_to_change_r_max=150,
+        colors_to_change_g_min=5,
+        colors_to_change_g_max=150,
+        colors_to_change_b_min=5,
+        colors_to_change_b_max=150,
+        flip_image_left_right_frequency=2,
+        flip_image_up_down_frequency=2,
+        verbose=True,
+        bloom_kernel_min=1,
+        bloom_kernel_max=25,
+        bloom_sigmaX_min=140,
+        bloom_sigmaX_max=240,
+        bloom_intensity_min=4.5,
+        bloom_intensity_max=20.5,
+        bloom_frequency=20,
+        fish_distortion_min1=0.01,
+        fish_distortion_max1=0.6,
+        fish_distortion_min2=0.01,
+        fish_distortion_max2=0.6,
+        fish_distortion_min3=0.01,
+        fish_distortion_max3=0.6,
+        fish_distortion_min4=0.01,
+        fish_distortion_max4=0.04,
+        fish_divider_1_min=1,
+        fish_divider_1_max=2,
+        fish_divider_2_min=1,
+        fish_divider_2_max=4,
+        fish_divider_3_min=1,
+        fish_divider_3_max=2,
+        fish_divider_4_min=2,
+        fish_divider_4_max=6,
+        fish_border_add=0.1,
+        fish_frequency=20,
+    ):
+        v = rf"""[class{classnumber}]
+        classnumber:{classnumber}
+        classname:{classname}
+        random_background_folder:{random_background_folder}
+        class_pictures:{class_pictures}
+        personal_yaml_file:{personal_yaml_file}
+        outputfolder:{outputfolder}
+        howmany:{howmany}
+        background_qty:{background_qty}
+        processes:{processes}
+        image_size_width:{image_size_width}
+        image_size_height:{image_size_height}
+        needle_size_percentage_min:{needle_size_percentage_min}
+        needle_size_percentage_max:{needle_size_percentage_max}
+        blur_image_kernel_min:{blur_image_kernel_min}
+        blur_image_kernel_max:{blur_image_kernel_max}
+        blur_image_frequency:{blur_image_frequency}
+        sharpen_image_kernel_min:{sharpen_image_kernel_min}
+        sharpen_image_kernel_max:{sharpen_image_kernel_max}
+        sharpen_image_frequency:{sharpen_image_frequency}
+        distorted_resizing_add_min_x:{distorted_resizing_add_min_x}
+        distorted_resizing_add_max_x:{distorted_resizing_add_max_x}
+        distorted_resizing_add_min_y:{distorted_resizing_add_min_y}
+        distorted_resizing_add_max_y:{distorted_resizing_add_max_y}
+        distorted_resizing_frequency:{distorted_resizing_frequency}
+        blur_borders_min_x0:{blur_borders_min_x0}
+        blur_borders_max_x0:{blur_borders_max_x0}
+        blur_borders_min_x1:{blur_borders_min_x1}
+        blur_borders_max_x1:{blur_borders_max_x1}
+        blur_borders_min_y0:{blur_borders_min_y0}
+        blur_borders_max_y0:{blur_borders_max_y0}
+        blur_borders_min_y1:{blur_borders_min_y1}
+        blur_borders_max_y1:{blur_borders_max_y1}
+        blur_borders_kernel_min:{blur_borders_kernel_min}
+        blur_borders_kernel_max:{blur_borders_kernel_max}
+        blur_borders_frequency:{blur_borders_frequency}
+        pixelborder_min:{pixelborder_min}
+        pixelborder_max:{pixelborder_max}
+        pixelborder_loop_min:{pixelborder_loop_min}
+        pixelborder_loop_max:{pixelborder_loop_max}
+        pixelborder_frequency:{pixelborder_frequency}
+        perspective_distortion_min_x:{perspective_distortion_min_x}
+        perspective_distortion_max_x:{perspective_distortion_max_x}
+        perspective_distortion_min_y:{perspective_distortion_min_y}
+        perspective_distortion_max_y:{perspective_distortion_max_y}
+        perspective_distortion_percentage:{perspective_distortion_percentage}
+        transparency_distortion_min:{transparency_distortion_min}
+        transparency_distortion_max:{transparency_distortion_max}
+        transparency_distortion_frequency:{transparency_distortion_frequency}
+        canny_edge_blur_thresh_lower_min:{canny_edge_blur_thresh_lower_min}
+        canny_edge_blur_thresh_lower_max:{canny_edge_blur_thresh_lower_max}
+        canny_edge_blur_thresh_upper_min:{canny_edge_blur_thresh_upper_min}
+        canny_edge_blur_thresh_upper_max:{canny_edge_blur_thresh_upper_max}
+        canny_edge_blur_kernel_min:{canny_edge_blur_kernel_min}
+        canny_edge_blur_kernel_max:{canny_edge_blur_kernel_max}
+        canny_edge_blur_frequency:{canny_edge_blur_frequency}
+        random_crop_min_x:{random_crop_min_x}
+        random_crop_max_x:{random_crop_max_x}
+        random_crop_min_y:{random_crop_min_y}
+        random_crop_max_y:{random_crop_max_y}
+        random_crop_frequency:{random_crop_frequency}
+        hue_shift_min:{hue_shift_min}
+        hue_shift_max:{hue_shift_max}
+        hue_shift_frequency:{hue_shift_frequency}
+        change_contrast_min:{change_contrast_min}
+        change_contrast_max:{change_contrast_max}
+        change_contrast_frequency:{change_contrast_frequency}
+        rotate_image_min:{rotate_image_min}
+        rotate_image_max:{rotate_image_max}
+        rotate_image_frequency:{rotate_image_frequency}
+        colors_to_change_percentage_max:{colors_to_change_percentage_max}
+        colors_to_change_percentage_min:{colors_to_change_percentage_min}
+        colors_to_change_frequency:{colors_to_change_frequency}
+        colors_to_change_r_min:{colors_to_change_r_min}
+        colors_to_change_r_max:{colors_to_change_r_max}
+        colors_to_change_g_min:{colors_to_change_g_min}
+        colors_to_change_g_max:{colors_to_change_g_max}
+        colors_to_change_b_min:{colors_to_change_b_min}
+        colors_to_change_b_max:{colors_to_change_b_max}
+        flip_image_left_right_frequency:{flip_image_left_right_frequency}
+        flip_image_up_down_frequency:{flip_image_up_down_frequency}
+        verbose:{verbose}
+        bloom_kernel_min:{bloom_kernel_min}
+        bloom_kernel_max:{bloom_kernel_max}
+        bloom_sigmaX_min:{bloom_sigmaX_min}
+        bloom_sigmaX_max:{bloom_sigmaX_max}
+        bloom_intensity_min:{bloom_intensity_min}
+        bloom_intensity_max:{bloom_intensity_max}
+        bloom_frequency:{bloom_frequency}
+        fish_distortion_min1:{fish_distortion_min1}
+        fish_distortion_max1:{fish_distortion_max1}
+        fish_distortion_min2:{fish_distortion_min2}
+        fish_distortion_max2:{fish_distortion_max2}
+        fish_distortion_min3:{fish_distortion_min3}
+        fish_distortion_max3:{fish_distortion_max3}
+        fish_distortion_min4:{fish_distortion_min4}
+        fish_distortion_max4:{fish_distortion_max4}
+        fish_divider_1_min:{fish_divider_1_min}
+        fish_divider_1_max:{fish_divider_1_max}
+        fish_divider_2_min:{fish_divider_2_min}
+        fish_divider_2_max:{fish_divider_2_max}
+        fish_divider_3_min:{fish_divider_3_min}
+        fish_divider_3_max:{fish_divider_3_max}
+        fish_divider_4_min:{fish_divider_4_min}
+        fish_divider_4_max:{fish_divider_4_max}
+        fish_border_add:{fish_border_add}
+        fish_frequency:{fish_frequency}"""
+        resu = ""
+        for vv in v.splitlines():
+            resu += vv.strip() + "\n"
+        resu += "\n\n"
+        return resu
+
+    maindict = {
+        "classnumber": 0,
+        "classname": r"",
+        "random_background_folder": r"",
+        "class_pictures": r"",
+        "personal_yaml_file": "",
+        "outputfolder": r"",
+        "howmany": 3000,
+        "background_qty": 300,
+        "processes": 4,
+        "image_size_width": 640,
+        "image_size_height": 640,
+        "needle_size_percentage_min": 0.2,
+        "needle_size_percentage_max": 0.8,
+        "blur_image_kernel_min": 1,
+        "blur_image_kernel_max": 5,
+        "blur_image_frequency": 10,
+        "sharpen_image_kernel_min": 1,
+        "sharpen_image_kernel_max": 6,
+        "sharpen_image_frequency": 10,
+        "distorted_resizing_add_min_x": 0.01,
+        "distorted_resizing_add_max_x": 0.15,
+        "distorted_resizing_add_min_y": 0.01,
+        "distorted_resizing_add_max_y": 0.15,
+        "distorted_resizing_frequency": 30,
+        "blur_borders_min_x0": 0.01,
+        "blur_borders_max_x0": 0.1,
+        "blur_borders_min_x1": 0.01,
+        "blur_borders_max_x1": 0.1,
+        "blur_borders_min_y0": 0.01,
+        "blur_borders_max_y0": 0.1,
+        "blur_borders_min_y1": 0.01,
+        "blur_borders_max_y1": 0.1,
+        "blur_borders_kernel_min": 1,
+        "blur_borders_kernel_max": 6,
+        "blur_borders_frequency": 10,
+        "pixelborder_min": 1,
+        "pixelborder_max": 20,
+        "pixelborder_loop_min": 1,
+        "pixelborder_loop_max": 2,
+        "pixelborder_frequency": 20,
+        "perspective_distortion_min_x": 0.01,
+        "perspective_distortion_max_x": 0.15,
+        "perspective_distortion_min_y": 0.01,
+        "perspective_distortion_max_y": 0.15,
+        "perspective_distortion_percentage": 10,
+        "transparency_distortion_min": 150,
+        "transparency_distortion_max": 255,
+        "transparency_distortion_frequency": 40,
+        "canny_edge_blur_thresh_lower_min": 10,
+        "canny_edge_blur_thresh_lower_max": 20,
+        "canny_edge_blur_thresh_upper_min": 80,
+        "canny_edge_blur_thresh_upper_max": 90,
+        "canny_edge_blur_kernel_min": 1,
+        "canny_edge_blur_kernel_max": 6,
+        "canny_edge_blur_frequency": 20,
+        "random_crop_min_x": 0.01,
+        "random_crop_max_x": 0.10,
+        "random_crop_min_y": 0.01,
+        "random_crop_max_y": 0.10,
+        "random_crop_frequency": 20,
+        "hue_shift_min": 1,
+        "hue_shift_max": 180,
+        "hue_shift_frequency": 90,
+        "change_contrast_min": 0.8,
+        "change_contrast_max": 1.2,
+        "change_contrast_frequency": 30,
+        "rotate_image_min": 2,
+        "rotate_image_max": 359,
+        "rotate_image_frequency": 90,
+        "colors_to_change_percentage_max": 75,
+        "colors_to_change_percentage_min": 1,
+        "colors_to_change_frequency": 90,
+        "colors_to_change_r_min": 5,
+        "colors_to_change_r_max": 150,
+        "colors_to_change_g_min": 5,
+        "colors_to_change_g_max": 150,
+        "colors_to_change_b_min": 5,
+        "colors_to_change_b_max": 150,
+        "flip_image_left_right_frequency": 2,
+        "flip_image_up_down_frequency": 2,
+        "verbose": True,
+        "bloom_kernel_min": 1,
+        "bloom_kernel_max": 25,
+        "bloom_sigmaX_min": 140,
+        "bloom_sigmaX_max": 240,
+        "bloom_intensity_min": 4.5,
+        "bloom_intensity_max": 20.5,
+        "bloom_frequency": 20,
+        "fish_distortion_min1": 0.01,
+        "fish_distortion_max1": 0.6,
+        "fish_distortion_min2": 0.01,
+        "fish_distortion_max2": 0.6,
+        "fish_distortion_min3": 0.01,
+        "fish_distortion_max3": 0.6,
+        "fish_distortion_min4": 0.01,
+        "fish_distortion_max4": 0.04,
+        "fish_divider_1_min": 1,
+        "fish_divider_1_max": 2,
+        "fish_divider_2_min": 1,
+        "fish_divider_2_max": 4,
+        "fish_divider_3_min": 1,
+        "fish_divider_3_max": 2,
+        "fish_divider_4_min": 2,
+        "fish_divider_4_max": 6,
+        "fish_border_add": 0.1,
+        "fish_frequency": 20,
+    }
+    allinis = ""
+    for _class in allclasses:
+        _maindict = maindict.copy()
+        _maindict.update(_class)
+        allinis += _generate_ini_file(**_maindict)
+    return allinis
